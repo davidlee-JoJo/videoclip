@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Web 影片剪輯器</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Web 影片剪輯器</h1>
+      <p class="sub">上傳多段影片 → 拖曳排序 → 裁剪 → 合併匯出單一 MP4（全程在本機瀏覽器處理，影片不會上傳）</p>
+    </div>
+  </header>
+
+  <div id="compatWarning" class="warning hidden">
+    您的瀏覽器不支援 WebCodecs 或缺少必要元件，無法匯出。請改用最新版 <strong>Chrome</strong> 或 <strong>Edge</strong>（桌機、Android Chrome 94+、iOS Safari 17+）。
+  </div>
+
+  <main>
+    <section class="panel upload-panel">
+      <input type="file" id="fileInput" accept="video/mp4,video/quicktime,.mp4,.mov,.m4v" multiple hidden>
+      <button id="btnUpload" class="primary">＋ 上傳影片</button>
+      <button id="btnClear">一鍵清除</button>
+      <span id="uploadStatus" class="status"></span>
+    </section>
+
+    <section class="editor">
+      <div class="panel preview-panel">
+        <video id="previewVideo" playsinline></video>
+        <div class="transport">
+          <button id="btnPlay" title="播放 / 暫停">▶</button>
+          <span id="timeLabel">0:00 / 0:00</span>
+          <span id="clipLabel" class="muted"></span>
+        </div>
+        <div class="trim-bar">
+          <span class="trim-title">在播放頭位置剪輯：</span>
+          <button id="btnKeepBefore">✂ 保留播放頭以前</button>
+          <button id="btnKeepAfter">✂ 保留播放頭以後</button>
+          <button id="btnResetTrim">↺ 還原此段</button>
+        </div>
+      </div>
+
+      <aside class="panel export-panel">
+        <h2>合併匯出</h2>
+        <label class="field-label">基準影片（決定輸出解析度與比例）
+          <div class="select-wrap"><select id="selReference"></select></div>
+        </label>
+        <fieldset>
+          <legend>解析度（依基準影片）</legend>
+          <label><input type="radio" name="scale" value="100" checked> 100%</label>
+          <label><input type="radio" name="scale" value="80"> 80%</label>
+          <label><input type="radio" name="scale" value="50"> 50%</label>
+        </fieldset>
+        <fieldset>
+          <legend>壓縮品質</legend>
+          <label><input type="radio" name="quality" value="high"> 高</label>
+          <label><input type="radio" name="quality" value="medium" checked> 中</label>
+          <label><input type="radio" name="quality" value="low"> 低</label>
+        </fieldset>
+        <button id="btnExport" class="primary" disabled>合併匯出 MP4</button>
+        <div id="progressWrap" class="progress-wrap hidden">
+          <div id="progressBar"></div>
+          <span id="progressText">0%</span>
+        </div>
+        <div id="resultArea" class="hidden">
+          <p class="result-title">匯出結果預覽：</p>
+          <video id="resultVideo" controls playsinline></video>
+          <a id="btnDownload" class="primary download" href="#" download="merged.mp4">⬇ 下載結果</a>
+          <button id="btnShare" class="primary download hidden">📤 儲存／分享結果</button>
+        </div>
+      </aside>
+    </section>
+
+    <section class="panel timeline-panel">
+      <h2>時間軸 <span class="muted">（拖曳／長按拖曳影片區塊調整順序，或按 ◀▶；點擊或拖曳時間軸移動播放頭）</span></h2>
+      <div id="emptyState" class="empty">尚未上傳影片，請先從上方上傳 MP4 / MOV 檔案</div>
+      <div id="timeline" class="timeline"></div>
+      <div id="playhead" class="playhead hidden"></div>
+    </section>
+  </main>
+
+  <footer class="foot muted">
+    支援輸入：MP4 / MOV（H.264 或 H.265/HEVC 視訊 + AAC 音訊）。輸出：MP4（H.264 + AAC，不相容環境自動改用 VP9 + Opus）。
+  </footer>
+
+  <script src="vendor/mp4box.all.min.js"></script>
+  <script src="vendor/mp4-muxer.min.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
