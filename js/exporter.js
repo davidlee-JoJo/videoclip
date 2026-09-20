@@ -1,5 +1,6 @@
 import { decodeAndEncode } from './decoder.js';
 import { encodeAllAudio } from './audio.js';
+import { diagMark, diagPct, diagStart } from './diag.js';
 
 const BPP = { high: 0.15, medium: 0.1, low: 0.06 };
 const AUDIO_BR = { high: 192000, medium: 128000, low: 96000 };
@@ -42,7 +43,7 @@ function buildVideoTrials(outW, outH, bitrate, fps) {
   return trials;
 }
 
-export async function exportMovie({ clips, reference, scalePct, quality, onProgress, maxOutputSide = 0, memBudgetBytes }) {
+export async function exportMovie({ clips, reference, scalePct, quality, onProgress, maxOutputSide = 0, memBudgetBytes, maxFps = 60, forceSoftwareEncoder = false }) {
   const baseW = reference.width, baseH = reference.height;
   let outW = even(baseW * scalePct / 100);
   let outH = even(baseH * scalePct / 100);
@@ -51,9 +52,11 @@ export async function exportMovie({ clips, reference, scalePct, quality, onProgr
     outW = even(outW * r);
     outH = even(outH * r);
   }
-  const fps = Math.min(Math.max(Math.round(reference.fps) || 30, 10), 60);
+  const fps = Math.min(Math.max(Math.round(reference.fps) || 30, 10), maxFps);
   const videoBitrate = Math.min(Math.max(Math.round(outW * outH * fps * BPP[quality]), 400_000), 80_000_000);
   const audioBitrate = AUDIO_BR[quality];
+  diagStart({ outW, outH, fps, quality, hw: !forceSoftwareEncoder, ua: typeof navigator !== 'undefined' ? navigator.userAgent : '' });
+  diagMark('probe-video', { codec: undefined });
 
   const videoRes = await pickCodec(buildVideoTrials(outW, outH, videoBitrate, fps));
   if (!videoRes.pick) {
@@ -64,6 +67,7 @@ export async function exportMovie({ clips, reference, scalePct, quality, onProgr
     );
   }
   const videoPick = videoRes.pick;
+  diagMark('probe-audio', { codec: undefined });
 
   const audioRes = await pickCodec([
     { kind: 'audio', muxerName: 'aac', label: 'AAC', probe: () => ({ codec: 'mp4a.40.2', sampleRate: 48000, numberOfChannels: 2, bitrate: audioBitrate }) },
@@ -138,7 +142,9 @@ export async function exportMovie({ clips, reference, scalePct, quality, onProgr
   const report = (audioFrac = 0) => {
     const frameProg = (framesDone / estFrames) * 0.9;
     const feedProg = feedFrac * 0.45;
-    onProgress?.(Math.min(0.95, Math.max(frameProg, feedProg)) + audioFrac * 0.05);
+    const frac = Math.min(0.95, Math.max(frameProg, feedProg)) + audioFrac * 0.05;
+    diagPct(frac);
+    onProgress?.(frac);
   };
 
   const canvas = new OffscreenCanvas(outW, outH);
@@ -153,16 +159,24 @@ export async function exportMovie({ clips, reference, scalePct, quality, onProgr
     error: (e) => { encoderError = e; },
   });
   let encoderError = null;
-  encoder.configure({
+  const encCfgBase = {
     ...videoPick.cfg,
-    hardwareAcceleration: 'no-preference',
     bitrateMode: 'variable',
     avc: videoPick.muxerName === 'avc' ? { format: 'avc' } : undefined,
-  });
+  };
+  try {
+    encoder.configure({ ...encCfgBase, hardwareAcceleration: forceSoftwareEncoder ? 'prefer-software' : 'no-preference' });
+  } catch (e) {
+    if (!forceSoftwareEncoder) throw e;
+    encoder.configure({ ...encCfgBase, hardwareAcceleration: 'no-preference' });
+    forceSoftwareEncoder = false;
+  }
+  diagMark('mux-init', { codec: videoPick.cfg.codec, sw: forceSoftwareEncoder });
 
   let startUs = 0;
   for (const clip of activeClips) {
     if (encoderError) throw encoderError;
+    diagMark('encode-clip', { clip: clip.name, frames: Math.round((clip.outPoint - clip.inPoint) * (clip.fps || 30)) });
     const wrappedEncoder = {
       encode: (frame) => {
         encoder.encode(frame, { keyFrame: frameSeq % gop === 0 });
@@ -185,12 +199,14 @@ export async function exportMovie({ clips, reference, scalePct, quality, onProgr
     report();
     await new Promise((r) => setTimeout(r, 0));
   }
+  diagMark('flush');
   await encoder.flush();
   if (encoderError) throw encoderError;
 
   const totalUs = startUs;
 
   if (audioPick) {
+    diagMark('audio');
     const audioEncoder = new AudioEncoder({
       output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
       error: (e) => { audioEncoderError = e; },
@@ -206,6 +222,7 @@ export async function exportMovie({ clips, reference, scalePct, quality, onProgr
   }
 
   onProgress?.(0.99);
+  diagMark('mux-finalize');
   const blob = finalizeBlob();
   onProgress?.(1);
   return { blob, width: outW, height: outH };

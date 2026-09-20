@@ -18,11 +18,16 @@
     您的瀏覽器不支援 WebCodecs 或缺少必要元件，無法匯出。請改用最新版 <strong>Chrome</strong> 或 <strong>Edge</strong>（桌機、Android Chrome 94+、iOS Safari 17+）。
   </div>
 
+  <div id="diagNotice" class="notice hidden">
+    <span id="diagNoticeText"></span>
+    <button id="btnDiagDismiss" type="button" title="不再顯示">✕</button>
+  </div>
+
   <main>
     <section class="panel upload-panel">
       <input type="file" id="fileInput" accept="video/mp4,video/quicktime,.mp4,.mov,.m4v" multiple hidden>
-      <button id="btnUpload" class="primary">＋ 上傳影片</button>
-      <button id="btnClear">一鍵清除</button>
+      <button id="btnUpload" class="primary" type="button">＋ 上傳影片</button>
+      <button id="btnClear" type="button">一鍵清除</button>
       <span id="uploadStatus" class="status"></span>
     </section>
 
@@ -30,15 +35,15 @@
       <div class="panel preview-panel">
         <video id="previewVideo" playsinline></video>
         <div class="transport">
-          <button id="btnPlay" title="播放 / 暫停">▶</button>
+          <button id="btnPlay" title="播放 / 暫停" type="button">▶</button>
           <span id="timeLabel">0:00 / 0:00</span>
           <span id="clipLabel" class="muted"></span>
         </div>
         <div class="trim-bar">
           <span class="trim-title">在播放頭位置剪輯：</span>
-          <button id="btnKeepBefore">✂ 保留播放頭以前</button>
-          <button id="btnKeepAfter">✂ 保留播放頭以後</button>
-          <button id="btnResetTrim">↺ 還原此段</button>
+          <button id="btnKeepBefore" type="button">✂ 保留播放頭以前</button>
+          <button id="btnKeepAfter" type="button">✂ 保留播放頭以後</button>
+          <button id="btnResetTrim" type="button">↺ 還原此段</button>
         </div>
       </div>
 
@@ -59,7 +64,7 @@
           <label><input type="radio" name="quality" value="medium" checked> 中</label>
           <label><input type="radio" name="quality" value="low"> 低</label>
         </fieldset>
-        <button id="btnExport" class="primary" disabled>合併匯出 MP4</button>
+        <button id="btnExport" class="primary" type="button" disabled>合併匯出 MP4</button>
         <div id="progressWrap" class="progress-wrap hidden">
           <div id="progressBar"></div>
           <span id="progressText">0%</span>
@@ -68,7 +73,7 @@
           <p class="result-title">匯出結果預覽：</p>
           <video id="resultVideo" controls playsinline></video>
           <a id="btnDownload" class="primary download" href="#" download="merged.mp4">⬇ 下載結果</a>
-          <button id="btnShare" class="primary download hidden">📤 儲存／分享結果</button>
+          <button id="btnShare" class="primary download hidden" type="button">📤 儲存／分享結果</button>
         </div>
       </aside>
     </section>

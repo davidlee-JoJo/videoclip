@@ -46,6 +46,25 @@ main {
   font-size: 14px;
 }
 
+.notice {
+  max-width: 1180px;
+  margin: 8px auto 0;
+  padding: 10px 16px;
+  background: #4a3b14;
+  color: #ffe9b3;
+  border: 1px solid #6d5a24;
+  border-radius: 8px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+}
+.notice button {
+  flex: none;
+  padding: 4px 10px;
+}
+
 .panel {
   background: var(--panel);
   border: 1px solid var(--border);

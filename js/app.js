@@ -2,6 +2,7 @@ import { analyzeFile, checkWebCodecsSupport, isMobileDevice } from './library.js
 import { createTimeline } from './timeline.js';
 import { Preview } from './preview.js';
 import { exportMovie } from './exporter.js';
+import { diagDone, diagInterrupted, stageLabel } from './diag.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -40,6 +41,9 @@ function start() {
     btnShare: $('btnShare'),
     timeline: $('timeline'),
     playhead: $('playhead'),
+    diagNotice: $('diagNotice'),
+    diagNoticeText: $('diagNoticeText'),
+    btnDiagDismiss: $('btnDiagDismiss'),
   };
 
   const codecSupport = checkWebCodecsSupport();
@@ -56,6 +60,20 @@ function start() {
     const lowQ = document.querySelector('input[name="quality"][value="low"]');
     if (lowScale) lowScale.checked = true;
     if (lowQ) lowQ.checked = true;
+  }
+
+  let saferMode = false;
+  const interrupted = diagInterrupted();
+  if (interrupted) {
+    saferMode = mobile && ['probe-video', 'mux-init', 'encode-clip', 'flush'].includes(interrupted.stage);
+    els.diagNoticeText.textContent =
+      `偵測到上次匯出在「${stageLabel(interrupted.stage)}」約 ${Math.round((interrupted.pct || 0) * 100)}% 時中斷（頁面曾被關閉或瀏覽器崩潰）。` +
+      (saferMode ? '這次已自動改用軟體編碼等較保守設定，速度會慢一些但較穩定。' : '');
+    els.diagNotice.classList.remove('hidden');
+    els.btnDiagDismiss.addEventListener('click', () => {
+      els.diagNotice.classList.add('hidden');
+      saferMode = false;
+    });
   }
 
   const getTotal = () => state.clips.reduce((s, c) => s + Math.max(0, c.outPoint - c.inPoint), 0);
@@ -247,6 +265,8 @@ function start() {
         quality,
         maxOutputSide: mobile ? 1920 : 0,
         memBudgetBytes: mobile ? 110 * 1024 * 1024 : 600 * 1024 * 1024,
+        maxFps: mobile ? 30 : 60,
+        forceSoftwareEncoder: saferMode,
         onProgress: (p) => {
           els.progressBar.style.width = `${Math.round(p * 100)}%`;
           els.progressText.textContent = `${Math.round(p * 100)}%` + (mobile ? '（請保持頁面在前台、勿鎖螢幕）' : '');
@@ -274,6 +294,7 @@ function start() {
       releaseWakeLock();
       els.progressWrap.classList.add('hidden');
       updateExportEnabled();
+      diagDone();
     }
   });
 
