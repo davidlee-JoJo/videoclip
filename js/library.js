@@ -87,6 +87,96 @@ export async function feedMp4(file, mp4, startOffset = 0, chunkBytes = MP4_CHUNK
   return off;
 }
 
+const AAC_RATES = [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350];
+
+function parseExpandedSize(b, p) {
+  let size = 0;
+  let i = 0;
+  let s;
+  do {
+    s = b[p++];
+    size = size * 128 + (s & 0x7f);
+    i++;
+  } while ((s & 0x80) !== 0 && i < 4);
+  return [size, p];
+}
+
+export function parseAudioSpecificConfig(asc) {
+  if (!asc || asc.length < 2) return null;
+  const freqIdx = ((asc[0] & 0x07) << 1) | ((asc[1] & 0x80) >> 7);
+  if (freqIdx === 15 || freqIdx > 12) return null;
+  const chCfg = (asc[1] & 0x78) >> 3;
+  const channels = chCfg === 1 ? 1 : chCfg === 2 ? 2 : chCfg === 0 ? 8 : chCfg <= 7 ? chCfg : 2;
+  return { sampleRate: AAC_RATES[freqIdx], channelCount: Math.max(1, Math.min(channels, 6)) };
+}
+
+export async function extractEsdsFromFile(file) {
+  const SCAN = 2 * 1024 * 1024;
+  const chunks = [new Uint8Array(await file.slice(0, SCAN).arrayBuffer())];
+  if (file.size > SCAN * 2) {
+    chunks.push(new Uint8Array(await file.slice(file.size - SCAN).arrayBuffer()));
+  }
+  for (const b of chunks) {
+    for (let i = 0; i + 16 < b.length; i++) {
+      if (b[i] === 0x65 && b[i + 1] === 0x73 && b[i + 2] === 0x64 && b[i + 3] === 0x73) {
+        const p = i + 8;
+        if (b[p] !== 0x03) continue;
+        try {
+          let [, q] = parseExpandedSize(b, p + 1);
+          q += 2;
+          const fl = b[q++];
+          if (fl & 0x80) q += 2;
+          if (fl & 0x40) q += 1 + b[q];
+          if (fl & 0x20) q += 1;
+          if (b[q] !== 0x04) continue;
+          [, q] = parseExpandedSize(b, q + 1);
+          q += 13;
+          if (b[q] !== 0x05) continue;
+          const [dsiLen, r] = parseExpandedSize(b, q + 1);
+          if (dsiLen > 0 && dsiLen < 64 && r + dsiLen <= b.length) {
+            return b.slice(r, r + dsiLen);
+          }
+        } catch { /* keep scanning */ }
+      }
+    }
+  }
+  return null;
+}
+
+export async function getAudioTrackInfo(file) {
+  const mp4 = MP4Box.createFile();
+  let info = null;
+  mp4.onReady = (i) => { info = i; mp4.__vcReady = true; };
+  mp4.onError = () => {};
+  try {
+    await feedMp4(file, mp4, 0, MP4_CHUNK);
+    try { mp4.flush(); } catch { /* noop */ }
+    const at = info && info.audioTracks && info.audioTracks[0];
+    if (!at) return null;
+    const table = mp4.getTrackSamplesInfo ? mp4.getTrackSamplesInfo(at.id) : null;
+    if (!table || !table.length) return null;
+    const description = await extractEsdsFromFile(file);
+    if (!description) return null;
+    const asc = parseAudioSpecificConfig(description);
+    if (!asc) return null;
+    const samples = [];
+    for (const s of table) {
+      if (typeof s.offset !== 'number' || typeof s.size !== 'number' || !(s.size > 0)) return null;
+      samples.push({ cts: s.cts, duration: s.duration, is_sync: s.is_sync, offset: s.offset, size: s.size });
+    }
+    return { timescale: at.timescale, sampleRate: asc.sampleRate, channelCount: asc.channelCount, description, samples };
+  } catch {
+    return null;
+  } finally {
+    try { mp4.stop(); } catch { /* noop */ }
+    try { mp4.releaseUsedSamples(); } catch { /* noop */ }
+    try { if (mp4.stream) mp4.stream.buffers = []; } catch { /* noop */ }
+    mp4.onReady = null;
+    mp4.onSamples = null;
+    mp4.boxes = [];
+  }
+}
+
 async function probeMp4(file) {
   const mp4 = MP4Box.createFile();
   let info = null;
