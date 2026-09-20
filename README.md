@@ -18,6 +18,7 @@
 - 支援 WebCodecs 的瀏覽器：**Google Chrome / Microsoft Edge**（最新版，桌機與 Android 皆可），**iOS Safari 17+**
 - **手機**（Android Chrome、iOS Safari 17+）操作已最佳化：單欄版面、觸控排序與 seek、加大觸控目標；偵測到手機時預設 50% + 低品質以利效能
 - 需透過 **HTTP 伺服器**開啟（WebCodecs 與 `<video>` 不支援直接以 `file://` 開啟）
+- **手機匯出小技巧**：匯出期間請保持頁面在前台、勿鎖定螢幕（手機瀏覽器會終止背景分頁）；偵測到手機時輸出長邊自動上限 1920px，並使用較低記憶體佇列以避免記憶體不足崩潰
 
 ## 本地執行
 

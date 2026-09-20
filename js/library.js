@@ -37,9 +37,9 @@ export function hasHevc(bytes) {
   return findFourcc(bytes, 'hvcC') !== -1;
 }
 
-export function displayRotation(vTrack) {
+export function displayRotation(matrix) {
   try {
-    const m = vTrack && vTrack.matrix;
+    const m = matrix;
     if (!m || m.length < 9) return 0;
     const a = m[0] / 65536;
     const b = m[1] / 65536;
@@ -89,7 +89,28 @@ async function probeMp4(file) {
     mp4.flush();
   }
   if (!info) throw new Error('無法解析 MP4 結構（moov 遺失或檔案損毀）');
-  return info;
+  const vt = info.videoTracks && info.videoTracks[0];
+  const snap = {
+    video: vt ? {
+      nb_samples: vt.nb_samples,
+      duration: vt.duration,
+      timescale: vt.timescale,
+      matrix: vt.matrix ? Array.from(vt.matrix) : null,
+      track_width: vt.track_width,
+      track_height: vt.track_height,
+      rawWidth: vt.video ? vt.video.width : vt.width,
+      rawHeight: vt.video ? vt.video.height : vt.height,
+    } : null,
+    hasAudio: !!(info.audioTracks && info.audioTracks.length),
+  };
+  try { mp4.stop(); } catch { /* noop */ }
+  try { mp4.releaseUsedSamples(); } catch { /* noop */ }
+  try { if (mp4.stream) mp4.stream.buffers = []; } catch { /* noop */ }
+  mp4.onReady = null;
+  mp4.onError = null;
+  mp4.boxes = [];
+  info = null;
+  return snap;
 }
 
 function makeThumb(file) {
@@ -181,10 +202,10 @@ export async function analyzeFile(file) {
   }
 
   const info = await probeMp4(file);
-  const vTrack = info.videoTracks && info.videoTracks[0];
+  const vTrack = info.video;
   if (!vTrack || !vTrack.nb_samples) throw new Error(`${file.name}：沒有可用的視訊軌道`);
-  const hasAudio = !!(info.audioTracks && info.audioTracks.length);
-  const rotation = displayRotation(vTrack);
+  const hasAudio = info.hasAudio;
+  const rotation = displayRotation(vTrack.matrix);
 
   const duration = vTrack.timescale ? vTrack.duration / vTrack.timescale : 0;
   if (duration < MIN_DURATION) throw new Error(`${file.name}：影片時長過短`);
@@ -197,8 +218,8 @@ export async function analyzeFile(file) {
   if (measured) { width = measured.width; height = measured.height; }
   else if (vTrack.track_width && vTrack.track_height) { width = vTrack.track_width; height = vTrack.track_height; }
   else {
-    width = vTrack.video ? vTrack.video.width : vTrack.width;
-    height = vTrack.video ? vTrack.video.height : vTrack.height;
+    width = vTrack.rawWidth;
+    height = vTrack.rawHeight;
   }
   if (!width || !height) throw new Error(`${file.name}：無法取得解析度`);
 

@@ -217,8 +217,22 @@ function start() {
     updateExportEnabled();
     els.progressWrap.classList.remove('hidden');
     els.progressBar.style.width = '0%';
-    els.progressText.textContent = '0%';
+    els.progressText.textContent = mobile ? '0%（請保持頁面在前台、勿鎖螢幕）' : '0%';
     els.resultArea.classList.add('hidden');
+
+    let wakeLock = null;
+    const acquireWakeLock = async () => {
+      try {
+        if ('wakeLock' in navigator && navigator.wakeLock) wakeLock = await navigator.wakeLock.request('screen');
+      } catch { wakeLock = null; }
+    };
+    const releaseWakeLock = () => {
+      try { wakeLock?.release?.(); } catch { /* noop */ }
+      wakeLock = null;
+    };
+    const onVis = () => { if (document.visibilityState === 'visible' && exporting) acquireWakeLock(); };
+    document.addEventListener('visibilitychange', onVis);
+    await acquireWakeLock();
 
     const refId = Number(els.selReference.value);
     const reference = state.clips.find((c) => c.id === refId) || state.clips[0];
@@ -231,9 +245,11 @@ function start() {
         reference,
         scalePct,
         quality,
+        maxOutputSide: mobile ? 1920 : 0,
+        memBudgetBytes: mobile ? 110 * 1024 * 1024 : 600 * 1024 * 1024,
         onProgress: (p) => {
           els.progressBar.style.width = `${Math.round(p * 100)}%`;
-          els.progressText.textContent = `${Math.round(p * 100)}%`;
+          els.progressText.textContent = `${Math.round(p * 100)}%` + (mobile ? '（請保持頁面在前台、勿鎖螢幕）' : '');
         },
       });
       if (lastResultUrl) URL.revokeObjectURL(lastResultUrl);
@@ -254,6 +270,8 @@ function start() {
       alert(`匯出失敗：${e && e.message ? e.message : e}`);
     } finally {
       exporting = false;
+      document.removeEventListener('visibilitychange', onVis);
+      releaseWakeLock();
       els.progressWrap.classList.add('hidden');
       updateExportEnabled();
     }

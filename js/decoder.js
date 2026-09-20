@@ -10,7 +10,7 @@ function resolveVideoConfig(clip) {
 export async function demuxVideo(clip) {
   const file = clip.file;
   let cfg = resolveVideoConfig(clip);
-  const raw = await file.arrayBuffer();
+  let raw = await file.arrayBuffer();
   if (!cfg) {
     const scanRange = raw.byteLength > 20 * 1024 * 1024
       ? new Uint8Array(raw, 0, Math.min(raw.byteLength, 4 * 1024 * 1024))
@@ -44,6 +44,11 @@ export async function demuxVideo(clip) {
     }, 30000);
     mp4.onSamples = (id, user, s) => {
       if (id === track.id) {
+        for (const one of s) {
+          if (!(one.data instanceof Uint8Array) || one.data.buffer === raw?.buffer) {
+            one.data = new Uint8Array(one.data);
+          }
+        }
         samples.push(...s);
         if (samples.length >= total) {
           clearTimeout(timer);
@@ -60,6 +65,14 @@ export async function demuxVideo(clip) {
       resolve();
     }
   });
+
+  try { mp4.stop(); } catch { /* noop */ }
+  try { mp4.releaseUsedSamples(track.id); } catch { /* noop */ }
+  try { if (mp4.stream) mp4.stream.buffers = []; } catch { /* noop */ }
+  mp4.onSamples = null;
+  mp4.onReady = null;
+  mp4.onError = null;
+  raw = null;
 
   return {
     samples,
@@ -89,6 +102,15 @@ export async function decodeAndEncode(clip, ctxObj) {
   const inUs = Math.round(clip.inPoint * 1e6);
   const outUs = Math.round(clip.outPoint * 1e6);
 
+  const MEM_BUDGET = ctxObj.memBudgetBytes ?? 600 * 1024 * 1024;
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v | 0));
+  const srcW = clip.width || canvas.width, srcH = clip.height || canvas.height;
+  const decodedCost = Math.max(1, srcW * srcH * 4);
+  const canvasCost = Math.max(1, canvas.width * canvas.height * 4);
+  const frameQueueCap = clamp(ctxObj.frameQueueCap ?? (MEM_BUDGET / decodedCost), 2, 48);
+  const encodeQueueCap = clamp(ctxObj.encodeQueueCap ?? (MEM_BUDGET / canvasCost), 2, 16);
+  const decodeQueueCap = Math.max(30, ctxObj.decodeQueueCap ?? 240);
+
   const queue = [];
   let decodeError = null;
   let feedDone = false;
@@ -99,12 +121,11 @@ export async function decodeAndEncode(clip, ctxObj) {
   });
   decoder.configure({ codec, description });
 
-  const CHUNK = 30;
-  const DECODE_QUEUE_CAP = 240;
+  const CHUNK = Math.min(30, Math.max(frameQueueCap, 4));
   (async () => {
     try {
       for (let i = 0; i < samples.length; i += CHUNK) {
-        while ((queue.length > 48 || decoder.decodeQueueSize > DECODE_QUEUE_CAP) && !decodeError && !aborted()) await sleep(5);
+        while ((queue.length > frameQueueCap || decoder.decodeQueueSize > decodeQueueCap) && !decodeError && !aborted()) await sleep(5);
         if (decodeError || aborted()) return;
         for (const s of samples.slice(i, i + CHUNK)) decoder.decode(chunkFromSample(s, timescale));
         onFeedProgress?.(Math.min(1, (i + CHUNK) / samples.length));
@@ -133,7 +154,7 @@ export async function decodeAndEncode(clip, ctxObj) {
       const t = frame.timestamp;
       const keep = t >= inUs - 500 && t < outUs - 500;
       if (keep) {
-        while (encoder.encodeQueueSize > 16 && !aborted()) await sleep(5);
+        while (encoder.encodeQueueSize > encodeQueueCap && !aborted()) await sleep(5);
         if (aborted()) { frame.close(); break; }
         const sw = frame.displayWidth, sh = frame.displayHeight;
         const rot = ((clip.rotation || 0) % 360 + 360) % 360;

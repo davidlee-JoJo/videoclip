@@ -42,10 +42,15 @@ function buildVideoTrials(outW, outH, bitrate, fps) {
   return trials;
 }
 
-export async function exportMovie({ clips, reference, scalePct, quality, onProgress }) {
+export async function exportMovie({ clips, reference, scalePct, quality, onProgress, maxOutputSide = 0, memBudgetBytes }) {
   const baseW = reference.width, baseH = reference.height;
-  const outW = even(baseW * scalePct / 100);
-  const outH = even(baseH * scalePct / 100);
+  let outW = even(baseW * scalePct / 100);
+  let outH = even(baseH * scalePct / 100);
+  if (maxOutputSide > 0 && Math.max(outW, outH) > maxOutputSide) {
+    const r = maxOutputSide / Math.max(outW, outH);
+    outW = even(outW * r);
+    outH = even(outH * r);
+  }
   const fps = Math.min(Math.max(Math.round(reference.fps) || 30, 10), 60);
   const videoBitrate = Math.min(Math.max(Math.round(outW * outH * fps * BPP[quality]), 400_000), 80_000_000);
   const audioBitrate = AUDIO_BR[quality];
@@ -123,12 +128,14 @@ export async function exportMovie({ clips, reference, scalePct, quality, onProgr
       canvas,
       ctx,
       muxer,
+      memBudgetBytes,
       onFrameDone: () => { framesDone++; report(); },
       onFeedProgress: (f) => { feedFrac = Math.max(feedFrac, f); report(); },
       isErrored: () => !!encoderError,
     });
     startUs += Math.round((clip.outPoint - clip.inPoint) * 1e6);
     report();
+    await new Promise((r) => setTimeout(r, 0));
   }
   await encoder.flush();
   if (encoderError) throw encoderError;
