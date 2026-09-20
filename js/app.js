@@ -264,7 +264,7 @@ function start() {
         navigator.canShare({ files: [new File([result.blob], lastResultName, { type: 'video/mp4' })] });
       if (els.btnShare) els.btnShare.classList.toggle('hidden', !canShare);
       els.resultArea.classList.remove('hidden');
-      els.resultVideo.play().catch(() => {});
+      if (!mobile) els.resultVideo.play().catch(() => {});
     } catch (e) {
       console.error(e);
       alert(`匯出失敗：${e && e.message ? e.message : e}`);

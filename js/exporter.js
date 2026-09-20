@@ -71,14 +71,62 @@ export async function exportMovie({ clips, reference, scalePct, quality, onProgr
   ]);
   const audioPick = audioRes.pick;
 
-  const { Muxer, ArrayBufferTarget } = Mp4Muxer;
-  const muxer = new Muxer({
-    target: new ArrayBufferTarget(),
-    fastStart: 'in-memory',
-    firstTimestampBehavior: 'offset',
-    video: { codec: videoPick.muxerName, width: outW, height: outH, frameRate: fps },
-    audio: audioPick ? { codec: audioPick.muxerName, numberOfChannels: 2, sampleRate: 48000 } : undefined,
-  });
+  const { Muxer, ArrayBufferTarget, StreamTarget } = Mp4Muxer;
+  const useStreamingTarget = typeof StreamTarget === 'function' && typeof Blob === 'function';
+  let muxer;
+  let finalizeBlob;
+  if (useStreamingTarget) {
+    const parts = [];
+    let totalLen = 0;
+    const target = new StreamTarget({
+      onData: (data, position) => {
+        const copy = data instanceof Uint8Array ? data.slice(0) : new Uint8Array(data.slice(0));
+        let pos = typeof position === 'number' ? position : totalLen;
+        if (pos >= totalLen) {
+          parts.push({ buf: copy, off: pos });
+          totalLen = pos + copy.length;
+          return;
+        }
+        let done = 0;
+        for (let i = 0; i < parts.length && done < copy.length; i++) {
+          const p = parts[i];
+          const pEnd = p.off + p.buf.length;
+          if (pos >= p.off && pos < pEnd) {
+            const n = Math.min(copy.length - done, pEnd - pos);
+            p.buf.set(copy.subarray(done, done + n), pos - p.off);
+            pos += n;
+            done += n;
+          }
+        }
+      },
+    });
+    muxer = new Muxer({
+      target,
+      fastStart: false,
+      firstTimestampBehavior: 'offset',
+      video: { codec: videoPick.muxerName, width: outW, height: outH, frameRate: fps },
+      audio: audioPick ? { codec: audioPick.muxerName, numberOfChannels: 2, sampleRate: 48000 } : undefined,
+    });
+    finalizeBlob = () => {
+      muxer.finalize();
+      const blob = new Blob(parts.map((p) => p.buf), { type: 'video/mp4' });
+      parts.length = 0;
+      return blob;
+    };
+  } else {
+    const target = new ArrayBufferTarget();
+    muxer = new Muxer({
+      target,
+      fastStart: 'in-memory',
+      firstTimestampBehavior: 'offset',
+      video: { codec: videoPick.muxerName, width: outW, height: outH, frameRate: fps },
+      audio: audioPick ? { codec: audioPick.muxerName, numberOfChannels: 2, sampleRate: 48000 } : undefined,
+    });
+    finalizeBlob = () => {
+      muxer.finalize();
+      return new Blob([muxer.target.buffer], { type: 'video/mp4' });
+    };
+  }
 
   const activeClips = clips.filter(c => c.outPoint - c.inPoint > 0.05);
   const totalKept = activeClips.reduce((s, c) => s + (c.outPoint - c.inPoint), 0);
@@ -157,8 +205,8 @@ export async function exportMovie({ clips, reference, scalePct, quality, onProgr
     if (audioEncoderError) throw audioEncoderError;
   }
 
-  muxer.finalize();
+  onProgress?.(0.99);
+  const blob = finalizeBlob();
   onProgress?.(1);
-  const { buffer } = muxer.target;
-  return { blob: new Blob([buffer], { type: 'video/mp4' }), width: outW, height: outH };
+  return { blob, width: outW, height: outH };
 }
