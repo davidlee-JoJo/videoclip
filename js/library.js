@@ -72,22 +72,27 @@ export function hevcCodecString(d) {
 }
 
 const HEAD_SCAN = 2 * 1024 * 1024;
-const HEAD_PARSE = 4 * 1024 * 1024;
+export const MP4_CHUNK = 4 * 1024 * 1024;
+
+export async function feedMp4(file, mp4, startOffset = 0, chunkBytes = MP4_CHUNK) {
+  let off = startOffset;
+  while (!mp4.__vcReady && off < file.size) {
+    const end = Math.min(off + chunkBytes, file.size);
+    const buf = await file.slice(off, end).arrayBuffer();
+    buf.fileStart = off;
+    mp4.appendBuffer(buf);
+    off = end;
+  }
+  mp4.__vcBytesFed = off;
+  return off;
+}
 
 async function probeMp4(file) {
   const mp4 = MP4Box.createFile();
   let info = null;
-  mp4.onReady = (i) => { info = i; };
-  const head = await file.slice(0, HEAD_PARSE).arrayBuffer();
-  head.fileStart = 0;
-  mp4.appendBuffer(head);
-  mp4.flush();
-  if (!info && file.size > HEAD_PARSE) {
-    const tail = await file.slice(HEAD_PARSE).arrayBuffer();
-    tail.fileStart = HEAD_PARSE;
-    mp4.appendBuffer(tail);
-    mp4.flush();
-  }
+  mp4.onReady = (i) => { info = i; mp4.__vcReady = true; };
+  await feedMp4(file, mp4, 0, MP4_CHUNK);
+  try { mp4.flush(); } catch { /* noop */ }
   if (!info) throw new Error('無法解析 MP4 結構（moov 遺失或檔案損毀）');
   const vt = info.videoTracks && info.videoTracks[0];
   const snap = {
@@ -102,6 +107,7 @@ async function probeMp4(file) {
       rawHeight: vt.video ? vt.video.height : vt.height,
     } : null,
     hasAudio: !!(info.audioTracks && info.audioTracks.length),
+    __bytesFed: mp4.__vcBytesFed || 0,
   };
   try { mp4.stop(); } catch { /* noop */ }
   try { mp4.releaseUsedSamples(); } catch { /* noop */ }

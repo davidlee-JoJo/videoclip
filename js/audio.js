@@ -1,3 +1,5 @@
+import { diagMark } from './diag.js';
+
 const SR = 48000;
 const SEG = 5 * SR;
 
@@ -23,11 +25,16 @@ export async function encodeAllAudio(clips, encoder, totalUs, onSegmentDone) {
 
     let audioBuf = null;
     if (clip.hasAudio && n > 0) {
+      diagMark('audio', { clip: clip.name, mb: Math.round(clip.file.size / 104857.6) / 10 });
       try {
-        const buf = await clip.file.arrayBuffer();
-        audioBuf = await audioCtx.decodeAudioData(buf);
+        audioBuf = await audioCtx.decodeAudioData(clip.file);
       } catch {
-        audioBuf = null;
+        try {
+          const buf = await clip.file.arrayBuffer();
+          audioBuf = await audioCtx.decodeAudioData(buf);
+        } catch {
+          audioBuf = null;
+        }
       }
     }
 

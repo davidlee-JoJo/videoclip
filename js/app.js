@@ -2,7 +2,7 @@ import { analyzeFile, checkWebCodecsSupport, isMobileDevice } from './library.js
 import { createTimeline } from './timeline.js';
 import { Preview } from './preview.js';
 import { exportMovie } from './exporter.js';
-import { diagDone, diagInterrupted, stageLabel } from './diag.js';
+import { diagDone, diagInterrupted, diagStart, stageLabel } from './diag.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -233,6 +233,18 @@ function start() {
     if (exporting || !state.clips.length) return;
     exporting = true;
     updateExportEnabled();
+    const refId = Number(els.selReference.value);
+    const reference = state.clips.find((c) => c.id === refId) || state.clips[0];
+    const scalePct = Number(document.querySelector('input[name="scale"]:checked').value);
+    const quality = document.querySelector('input[name="quality"]:checked').value;
+    diagStart({
+      clips: state.clips.map((c) => ({ name: c.name, mb: Math.round(c.file.size / 104857.6) / 10 })),
+      totalMb: Math.round(state.clips.reduce((s, c) => s + c.file.size, 0) / 104857.6) / 10,
+      scalePct,
+      quality,
+      mobile,
+      ua: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+    });
     els.progressWrap.classList.remove('hidden');
     els.progressBar.style.width = '0%';
     els.progressText.textContent = mobile ? '0%（請保持頁面在前台、勿鎖螢幕）' : '0%';
@@ -251,11 +263,6 @@ function start() {
     const onVis = () => { if (document.visibilityState === 'visible' && exporting) acquireWakeLock(); };
     document.addEventListener('visibilitychange', onVis);
     await acquireWakeLock();
-
-    const refId = Number(els.selReference.value);
-    const reference = state.clips.find((c) => c.id === refId) || state.clips[0];
-    const scalePct = Number(document.querySelector('input[name="scale"]:checked').value);
-    const quality = document.querySelector('input[name="quality"]:checked').value;
 
     try {
       const result = await exportMovie({

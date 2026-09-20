@@ -1,6 +1,6 @@
 import { decodeAndEncode } from './decoder.js';
 import { encodeAllAudio } from './audio.js';
-import { diagMark, diagPct, diagStart } from './diag.js';
+import { diagMark, diagPct } from './diag.js';
 
 const BPP = { high: 0.15, medium: 0.1, low: 0.06 };
 const AUDIO_BR = { high: 192000, medium: 128000, low: 96000 };
@@ -55,8 +55,7 @@ export async function exportMovie({ clips, reference, scalePct, quality, onProgr
   const fps = Math.min(Math.max(Math.round(reference.fps) || 30, 10), maxFps);
   const videoBitrate = Math.min(Math.max(Math.round(outW * outH * fps * BPP[quality]), 400_000), 80_000_000);
   const audioBitrate = AUDIO_BR[quality];
-  diagStart({ outW, outH, fps, quality, hw: !forceSoftwareEncoder, ua: typeof navigator !== 'undefined' ? navigator.userAgent : '' });
-  diagMark('probe-video', { codec: undefined });
+  diagMark('probe-video', { outW, outH, fps, bitrate: videoBitrate, hw: !forceSoftwareEncoder });
 
   const videoRes = await pickCodec(buildVideoTrials(outW, outH, videoBitrate, fps));
   if (!videoRes.pick) {
@@ -159,6 +158,7 @@ export async function exportMovie({ clips, reference, scalePct, quality, onProgr
     error: (e) => { encoderError = e; },
   });
   let encoderError = null;
+  const hwRequested = !forceSoftwareEncoder;
   const encCfgBase = {
     ...videoPick.cfg,
     bitrateMode: 'variable',
@@ -171,7 +171,7 @@ export async function exportMovie({ clips, reference, scalePct, quality, onProgr
     encoder.configure({ ...encCfgBase, hardwareAcceleration: 'no-preference' });
     forceSoftwareEncoder = false;
   }
-  diagMark('mux-init', { codec: videoPick.cfg.codec, sw: forceSoftwareEncoder });
+  diagMark('mux-init', { codec: videoPick.cfg.codec, hwReq: hwRequested, hw: !forceSoftwareEncoder });
 
   let startUs = 0;
   for (const clip of activeClips) {

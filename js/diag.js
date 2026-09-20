@@ -5,6 +5,7 @@ const STAGE_LABELS = {
   'probe-video': '偵測影片編碼器',
   'probe-audio': '偵測音訊編碼器',
   'mux-init': '初始化混流器',
+  demux: '讀取與剖析樣本表',
   'encode-clip': '解碼＋編碼影片',
   flush: '等待編碼排空',
   audio: '編碼音訊',
@@ -54,6 +55,7 @@ export function diagMark(stage, extra) {
   st.stage = stage;
   st.extra = extra || null;
   st.ts = Date.now();
+  if (extra && typeof extra === 'object') st.meta = Object.assign({}, st.meta, extra);
   save(st);
 }
 

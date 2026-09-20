@@ -1,4 +1,5 @@
-import { extractAvcCDescription, extractHvcCDescription, avcCodecString, hevcCodecString } from './library.js';
+import { extractAvcCDescription, extractHvcCDescription, avcCodecString, hevcCodecString, feedMp4, MP4_CHUNK } from './library.js';
+import { diagMark } from './diag.js';
 
 function resolveVideoConfig(clip) {
   if (clip.videoCodec && clip.codecString && clip.description) {
@@ -10,61 +11,64 @@ function resolveVideoConfig(clip) {
 export async function demuxVideo(clip) {
   const file = clip.file;
   let cfg = resolveVideoConfig(clip);
-  let raw = await file.arrayBuffer();
+
+  diagMark('demux', { clip: file.name, mb: Math.round(file.size / 104857.6) / 10 });
+  const mp4 = MP4Box.createFile();
+  let readyFlag = false;
+  const infoP = new Promise((resolve, reject) => {
+    mp4.onReady = (i) => { readyFlag = true; mp4.__vcReady = true; resolve(i); };
+    mp4.onError = (e) => reject(new Error('mp4box 錯誤：' + JSON.stringify(e)));
+  });
+  infoP.catch(() => {});
+  try {
+    await feedMp4(file, mp4, 0, MP4_CHUNK);
+    try { mp4.flush(); } catch { /* noop */ }
+  } catch (e) {
+    try { mp4.stop(); } catch { /* noop */ }
+    throw e;
+  }
+  clip.__demuxFeedBytes = mp4.__vcBytesFed || 0;
+  if (!readyFlag) {
+    try { mp4.stop(); } catch { /* noop */ }
+    throw new Error(`${file.name}：mp4box 無法解析檔案（找不到 moov）`);
+  }
+  const info = await infoP;
+
   if (!cfg) {
-    const scanRange = raw.byteLength > 20 * 1024 * 1024
-      ? new Uint8Array(raw, 0, Math.min(raw.byteLength, 4 * 1024 * 1024))
-      : new Uint8Array(raw);
-    const tailRange = new Uint8Array(raw, Math.max(0, raw.byteLength - 4 * 1024 * 1024));
-    const avc = extractAvcCDescription(scanRange) || extractAvcCDescription(tailRange);
-    const hvc = extractHvcCDescription(scanRange) || extractHvcCDescription(tailRange);
+    const scanHead = new Uint8Array(await file.slice(0, MP4_CHUNK).arrayBuffer());
+    const scanTail = new Uint8Array(await file.slice(Math.max(0, file.size - MP4_CHUNK)).arrayBuffer());
+    const avc = extractAvcCDescription(scanHead) || extractAvcCDescription(scanTail);
+    const hvc = extractHvcCDescription(scanHead) || extractHvcCDescription(scanTail);
     if (avc) cfg = { type: 'avc', codec: avcCodecString(avc), description: avc };
     else if (hvc) cfg = { type: 'hevc', codec: hevcCodecString(hvc), description: hvc };
     else throw new Error(`${file.name}：匯出時找不到 avcC / hvcC 設定`);
   }
 
-  const mp4 = MP4Box.createFile();
-  const info = await new Promise((resolve, reject) => {
-    let done = false;
-    mp4.onReady = (i) => { done = true; resolve(i); };
-    mp4.onError = (e) => reject(new Error('mp4box 錯誤：' + JSON.stringify(e)));
-    raw.fileStart = 0;
-    mp4.appendBuffer(raw);
-    mp4.flush();
-    setTimeout(() => { if (!done) reject(new Error('mp4box 無法解析檔案')); }, 0);
-  });
-
   const track = info.videoTracks[0];
-  const total = track.nb_samples;
-  const samples = [];
-  await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      if (samples.length === 0) reject(new Error(`${file.name}：無法提取視訊樣本`));
-      else resolve();
-    }, 30000);
-    mp4.onSamples = (id, user, s) => {
-      if (id === track.id) {
-        for (const one of s) {
-          if (!(one.data instanceof Uint8Array) || one.data.buffer === raw?.buffer) {
-            one.data = new Uint8Array(one.data);
-          }
+  let samples = null;
+  try {
+    const table = mp4.getTrackSamplesInfo ? mp4.getTrackSamplesInfo(track.id) : null;
+    if (table && table.length) {
+      samples = [];
+      for (const s of table) {
+        if (typeof s.offset !== 'number' || typeof s.size !== 'number' || !(s.size > 0)) {
+          samples = null;
+          break;
         }
-        samples.push(...s);
-        if (samples.length >= total) {
-          clearTimeout(timer);
-          resolve();
-        }
+        samples.push({
+          cts: s.cts,
+          duration: s.duration,
+          is_sync: !!s.is_sync,
+          offset: s.offset,
+          size: s.size,
+        });
       }
-    };
-    try {
-      mp4.setExtractionOptions(track.id, null, { nbSamples: Infinity });
-    } catch { /* older mp4box */ }
-    mp4.start();
-    if (samples.length >= total) {
-      clearTimeout(timer);
-      resolve();
     }
-  });
+  } catch { samples = null; }
+  if (!samples) {
+    try { mp4.stop(); } catch { /* noop */ }
+    throw new Error(`${file.name}：無法取得樣本表（stbl 損毀或 mp4box 不支援）`);
+  }
 
   try { mp4.stop(); } catch { /* noop */ }
   try { mp4.releaseUsedSamples(track.id); } catch { /* noop */ }
@@ -72,7 +76,7 @@ export async function demuxVideo(clip) {
   mp4.onSamples = null;
   mp4.onReady = null;
   mp4.onError = null;
-  raw = null;
+  mp4.boxes = [];
 
   return {
     samples,
@@ -83,13 +87,25 @@ export async function demuxVideo(clip) {
   };
 }
 
-function chunkFromSample(sample, timescale) {
+function chunkFromSample(sample, timescale, data) {
   return new EncodedVideoChunk({
     type: sample.is_sync ? 'key' : 'delta',
     timestamp: Math.round((sample.cts * 1e6) / timescale),
     duration: Math.round((sample.duration * 1e6) / timescale),
-    data: sample.data,
+    data,
   });
+}
+
+async function readSampleGroup(file, group) {
+  let min = Infinity;
+  let max = 0;
+  for (const s of group) {
+    if (s.offset < min) min = s.offset;
+    const end = s.offset + s.size;
+    if (end > max) max = end;
+  }
+  const buf = new Uint8Array(await file.slice(min, max).arrayBuffer());
+  return { buf, min };
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -97,6 +113,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export async function decodeAndEncode(clip, ctxObj) {
   const { startUs, encoder, canvas, ctx, muxer, onFrameDone, onFeedProgress, isErrored } = ctxObj;
   const { samples, timescale, description, codec } = await demuxVideo(clip);
+  diagMark('encode-clip', { clip: clip.name, samples: samples.length, phase: 'feed' });
   const aborted = () => (isErrored ? isErrored() : false);
 
   const inUs = Math.round(clip.inPoint * 1e6);
@@ -127,7 +144,11 @@ export async function decodeAndEncode(clip, ctxObj) {
       for (let i = 0; i < samples.length; i += CHUNK) {
         while ((queue.length > frameQueueCap || decoder.decodeQueueSize > decodeQueueCap) && !decodeError && !aborted()) await sleep(5);
         if (decodeError || aborted()) return;
-        for (const s of samples.slice(i, i + CHUNK)) decoder.decode(chunkFromSample(s, timescale));
+        const group = samples.slice(i, i + CHUNK);
+        const { buf, min } = await readSampleGroup(clip.file, group);
+        for (const s of group) {
+          decoder.decode(chunkFromSample(s, timescale, buf.subarray(s.offset - min, s.offset - min + s.size)));
+        }
         onFeedProgress?.(Math.min(1, (i + CHUNK) / samples.length));
       }
       await decoder.flush();
